@@ -1,0 +1,30 @@
+{
+  "name": "daytrace",
+  "version": "0.1.0-dev",
+  "description": "把今天真实发生过的工作痕迹，整理成一份每一句话都能点回证据的日志",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "daytrace": "bin/daytrace.js"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "test": "node --test",
+    "smoke": "node bin/daytrace.js today --dry-run"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "keywords": [
+    "worklog",
+    "journal",
+    "git",
+    "local-first"
+  ],
+  "dependencies": {}
+}

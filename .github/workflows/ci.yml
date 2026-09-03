@@ -1,0 +1,53 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # 双平台是一等公民（ADR-011），任一平台失败即失败
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+        node: ['22.5', '24', '25']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # 零依赖，所以没有 npm ci 这一步
+      - name: 确认没有第三方依赖
+        shell: bash
+        run: |
+          node -e "const p=require('./package.json');
+          const n=Object.keys(p.dependencies||{}).length+Object.keys(p.devDependencies||{}).length;
+          if(n>0){console.error('出现了第三方依赖，违反 ADR-012');process.exit(1)}
+          console.log('依赖数 0，OK')"
+
+      - name: 单元测试
+        run: node --test
+
+      - name: 冒烟测试（对仓库自身跑一次）
+        shell: bash
+        env:
+          DAYTRACE_DATA_DIR: ${{ runner.temp }}/daytrace-ci
+        run: |
+          node bin/daytrace.js today --root . --dry-run
+          node bin/daytrace.js where
+          node bin/daytrace.js today --root . --out "$RUNNER_TEMP/out"
+          node bin/daytrace.js today --root . --out "$RUNNER_TEMP/out"
+          node bin/daytrace.js purge --yes
+
+      - name: 确认没有网络调用
+        shell: bash
+        run: |
+          if grep -rnE "fetch\(|node:https?|XMLHttpRequest|WebSocket" src bin; then
+            echo "发现网络 API，违反「默认零网络」"; exit 1
+          fi
+          echo "无网络 API，OK"

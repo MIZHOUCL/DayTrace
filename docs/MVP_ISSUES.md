@@ -8,13 +8,17 @@
 
 ## 实现状态（2026-09-03）
 
-骨架已在仓库根目录（[`src/`](../src/)）跑通：零依赖 ESM JavaScript，30 个单元测试全绿，2000 行代码。21 条 P0 里 20 条已完成。
+骨架已在仓库根目录（[`src/`](../src/)）跑通：零依赖 ESM JavaScript，34 个单元测试全绿，约 2100 行代码。21 条 P0 里 20 条已完成。
 
 已实测通过：`daytrace today` / `date` / `week` / `show` / `where` / `init` / `purge`；同一天连跑两次输出逐字节相同且数据库不增行；全程零网络（代码里没有任何网络 API）；Claude Code 与 Codex 两个适配器都在真实数据上出过东西。
 
+**第一次 GitHub Actions 结果（macOS + Windows × Node 22.5 / 24 / 25）**：两个平台的 Node 24 与 25 全绿，两个平台的 22.5 全红。原因不是平台而是版本 —— `node:sqlite` 直到 22.13 / 23.4 才不再需要 `--experimental-sqlite`，详见 [ADR-018](./ADR.md)。已把版本下限改为 `>=22.13.0 <23.0.0 || >=23.4.0`，并在 CLI 入口加了版本闸门。
+
+因此这两条风险已经解除：**Windows 代码路径在 Node 24/25 上确认可用**（ADR-011 的第一份实证），CI 也已在 GitHub 上真跑过。
+
 尚未验证的部分（诚实标注）：
 
-- CI 工作流已写好但没在 GitHub 上真跑过；**Windows 路径分支从未在 Windows 上执行过**。
+- 修正后的矩阵（22.13 / 24 / 25）尚未在 GitHub 上跑过，22.13 这一格是按 Node 官方版本历史推断能通，不是实测。
 - 用户重命名项目的持久化只做了配置里的 `rules` 规则，没有对应的 CLI 命令（Epic 6 第 2 条仍未完成）。
 - 会话注入内容的过滤是按实机观察到的模式做的黑名单，新版本 CLI 可能引入新的注入格式，需要持续补。
 
@@ -28,7 +32,7 @@
 
 ## Epic 2：存储（3 条 P0）
 
-数据表从初版的 20 张压到 6 张：`projects`、`sessions`、`commits`、`evidence`、`facts`、`journals`。理由见 [ADR-017](./ADR.md)。存储驱动用 Node 内置 `node:sqlite`（需 Node ≥ 22.5，含 FTS5），不引入原生模块。
+数据表从初版的 20 张压到 6 张：`projects`、`sessions`、`commits`、`evidence`、`facts`、`journals`。理由见 [ADR-017](./ADR.md)。存储驱动用 Node 内置 `node:sqlite`（需 Node ≥ 22.13 或 ≥ 23.4，含 FTS5），不引入原生模块。
 
 - [x] P0 建表 + 迁移机制（版本表 + 顺序迁移脚本）。**迁移必须在第一次发版前就位**，本地 SQLite 应用一旦发版没有迁移就回不了头。
 - [x] P0 `evidence` 表唯一约束：`(source_type, source_ref, local_date)`，保证重复扫描幂等。`source_ref` 对 commit 是 hash，对会话是 `sessionId#消息序号`。

@@ -199,7 +199,7 @@ journals   id, local_date, markdown, created_at, updated_at, out_path
 - `evidence.path` 是真实路径（只本地用，永不外发），`path_alias` 是脱敏后的路径（用于发送）。初版 `evidence_events` 只有 `path_alias`，真实路径无处存放也无法反查。
 - `sessions.content_status ∈ {link_only, summary_imported, content_imported}`；`schema_version` 记录采集时探测到的格式版本。
 - 图关系不建表。需要图谱时由输出的 wiki-link 交给 Obsidian / Logseq（ADR-015）。
-- 存储驱动用 Node 内置的 `node:sqlite`（需 Node ≥ 22.5，含 FTS5），不引入 better-sqlite3 之类原生模块，保证 `npm i` 在两个平台都不需要编译器。
+- 存储驱动用 Node 内置的 `node:sqlite`（需 Node ≥ 22.13 或 ≥ 23.4，含 FTS5），不引入 better-sqlite3 之类原生模块，保证 `npm i` 在两个平台都不需要编译器。
 - 数据库文件位置：macOS `~/Library/Application Support/daytrace`，Windows `%APPDATA%\daytrace`。检测到位于 iCloud / OneDrive / Dropbox 同步目录时告警（SQLite WAL 在同步目录下有损坏风险）。
 
 ## 12. 输出与集成

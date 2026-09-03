@@ -106,7 +106,7 @@
 3. **借鉴收益**。三个可借鉴项目里两个是 TypeScript（worklog 的适配器架构、obsidian-daily-digest 的脱敏规则集），选 TS 能直接复用的量最大。devlog 是 Rust，但它的价值主要在规则而非代码，规则已在 [PRIOR_ART §3.1](./PRIOR_ART.md) 逐条摘出。
 4. **与初版自身一致**。初版 §14.1 本来就写 `v0.1.0 = CLI/核心扫描原型`，但 §3.1 的 MVP 又要求桌面应用 —— 本决策消除这个矛盾。
 
-实现回执（2026-09-03，骨架已跑通）：原计划写 TypeScript，落地时改成**零依赖 ESM JavaScript + JSDoc 类型注释**。原因是 TypeScript 编译器本身就是一个需要安装的依赖，而「`npm i` 不需要任何工具链」是本决策第 1 条理由的核心；同时 Node 22.5+ 内置的 `node:sqlite`（本机为 SQLite 3.53.3，含 FTS5）让存储层也不需要原生模块。实测结果：`dependencies` 与 `devDependencies` 均为 0，运行时只 import `node:fs` / `node:os` / `node:path` / `node:util` / `node:sqlite` / `node:child_process`，测试用 `node --test`。想要类型检查时可以随时加一层 `tsc --checkJs`，不影响运行。
+实现回执（2026-09-03，骨架已跑通）：原计划写 TypeScript，落地时改成**零依赖 ESM JavaScript + JSDoc 类型注释**。原因是 TypeScript 编译器本身就是一个需要安装的依赖，而「`npm i` 不需要任何工具链」是本决策第 1 条理由的核心；同时 Node 内置的 `node:sqlite`（本机为 SQLite 3.53.3，含 FTS5）让存储层也不需要原生模块 —— 但要注意版本下限是 **22.13 / 23.4**，不是模块刚加入的 22.5，见下段。实测结果：`dependencies` 与 `devDependencies` 均为 0，运行时只 import `node:fs` / `node:os` / `node:path` / `node:util` / `node:sqlite` / `node:child_process`，测试用 `node --test`。想要类型检查时可以随时加一层 `tsc --checkJs`，不影响运行。
 
 ## ADR-013：借鉴优先，许可证选 MIT
 
@@ -152,6 +152,24 @@
 
 删掉或合并：`workspaces`（合进配置文件）、`modules`（延后，见 MVP_ISSUES Epic 6）、`files` / `file_snapshots` / `changesets`（ADR-001 已取消文件系统扫描）、`graph_nodes` / `graph_edges`（ADR-015 已取消自建图谱，且与业务表并存会造成双写不一致）、`topics`（初版没写清由谁产生）、`consent_records` / `privacy_rules` / `ai_cache` / `ai_runs`（随阶段 C 一起加）、`questions` / `answers`（追问延后）、`tasks`（延后）。
 
-补充：初版 `evidence_events` 只有 `path_alias` 没有 `path`，真实路径无处可存也无法反查。新表 `evidence` 同时存 `path`（本地，不外发）与 `path_alias`（脱敏后用于发送），并对 `(source_type, source_ref, occurred_at)` 建唯一约束保证幂等。
+补充：初版 `evidence_events` 只有 `path_alias` 没有 `path`，真实路径无处可存也无法反查。新表 `evidence` 同时存 `path`（本地，不外发）与 `path_alias`（脱敏后用于发送），并对 `(source_type, source_ref, local_date)` 建唯一约束保证幂等。
+
+## ADR-018：Node 版本下限定为 22.13 / 23.4，并在入口处设闸门
+
+状态：Accepted（新增，由第一次 CI 结果驱动）
+
+决策：`engines.node` 写成 `>=22.13.0 <23.0.0 || >=23.4.0`；CI 矩阵的下限格从 22.5 改为 22.13；`bin/daytrace.js` 在 import 存储层**之前**先做版本检查，不达标时打印可读提示并退出，而不是抛 `ERR_UNKNOWN_BUILTIN_MODULE` 堆栈。
+
+原因：第一次 CI（macOS + Windows × Node 22.5 / 24 / 25）的结果是 **两个平台的 24、25 全绿，两个平台的 22.5 全红**，且都在 10-20 秒内快速失败。同一版本在两个平台同时失败说明这不是平台问题而是版本问题。Node 官方文档的版本历史确认了原因：
+
+> Added in: v22.5.0
+> v23.4.0, v22.13.0 — SQLite is no longer behind `--experimental-sqlite` but still experimental.
+> v25.7.0 — SQLite is now a release candidate.
+
+即 `node:sqlite` 虽然 22.5.0 就存在，但在 22.5–22.12 与 23.0–23.3 上必须加 `--experimental-sqlite`，直接 import 会抛 `ERR_UNKNOWN_BUILTIN_MODULE`。原先 `engines` 写 `>=22.5.0` 是错的。注意这个范围不能简写成 `>=22.13.0` —— 那样会错误地放进 23.0–23.3。
+
+顺带的收获：**Windows 代码路径在 Node 24 与 25 上都是通的**，这是 ADR-011「双平台一等公民」的第一份实证，此前文档里「Windows 从未在 Windows 上执行过」这条风险已经解除。
+
+实现细节：版本闸门放在 `src/env.js`，该文件不 import 任何可能失败的模块；`bin/daytrace.js` 先跑闸门，再用动态 `import()` 加载 CLI，并对 `ERR_UNKNOWN_BUILTIN_MODULE` 兜底。边界版本判定有单元测试覆盖。
 
 

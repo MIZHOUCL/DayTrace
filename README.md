@@ -21,7 +21,7 @@ npm link          # 或 npm i -g .
 daytrace today
 ```
 
-需要 Node ≥ 22.5（用到内置的 `node:sqlite`）。**没有任何第三方依赖**，`npm i` 不需要编译器、不需要 Rust。
+需要 Node ≥ 22.13（23.x 线则需 ≥ 23.4）—— 内置的 `node:sqlite` 从这两个版本起才不再需要 `--experimental-sqlite`。**没有任何第三方依赖**，`npm i` 不需要编译器、不需要 Rust。
 
 ## 它做什么
 
@@ -59,7 +59,11 @@ DayTrace 只赌一件事：**逐句可追溯** —— 每条要点都带 `source
 
 ## 项目状态
 
-早期。骨架已端到端跑通，v0.1 的 21 条 P0 完成 20 条。诚实的清单在 [docs/MVP_ISSUES.md](./docs/MVP_ISSUES.md)，其中两条要特别说明：**Windows 代码路径从未在 Windows 上执行过**，CI 也还没在 GitHub 上真跑过。欢迎在 Windows 上跑一次 `node --test` 然后开 issue 告诉我结果。
+早期。骨架已端到端跑通，v0.1 的 21 条 P0 完成 20 条，34 个单元测试。
+
+CI 已在 GitHub 上跑过：**macOS 与 Windows 在 Node 24 / 25 上全绿**。Node 22.5 曾经全红 —— 原因是 `node:sqlite` 直到 22.13 / 23.4 才不再需要 `--experimental-sqlite`，现已把版本下限改正并在入口加了检查（[ADR-018](./docs/ADR.md)）。
+
+诚实的清单在 [docs/MVP_ISSUES.md](./docs/MVP_ISSUES.md)。欢迎开 issue 告诉我它在你的环境里表现如何。
 
 ## 命令
 
@@ -111,7 +115,7 @@ DayTrace 只赌一件事：**逐句可追溯** —— 每条要点都带 `source
 ## 开发
 
 ```bash
-node --test          # 28 个测试，零依赖
+node --test          # 34 个测试，零依赖
 node --check src/cli.js
 node bin/daytrace.js today --dry-run   # 不写库、不写文件
 ```

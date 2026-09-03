@@ -21,7 +21,7 @@ npm link          # or: npm i -g .
 daytrace today
 ```
 
-Requires Node ≥ 22.5 (uses the built-in `node:sqlite`). **No third-party packages** — `npm i` needs no compiler and no Rust toolchain.
+Requires Node ≥ 22.13 (or ≥ 23.4 on the 23.x line) — that is when `node:sqlite` stopped requiring `--experimental-sqlite`. **No third-party packages** — `npm i` needs no compiler and no Rust toolchain.
 
 ## What it does
 
@@ -88,7 +88,7 @@ Data directory: `~/Library/Application Support/daytrace` on macOS, `%APPDATA%\da
 ## Development
 
 ```bash
-node --test          # 30 tests, zero dependencies
+node --test          # 34 tests, zero dependencies
 node bin/daytrace.js today --dry-run   # no database writes, no files written
 ```
 
@@ -96,7 +96,11 @@ Layout: `src/time.js` day boundary ｜ `src/db.js` 6 tables and migrations ｜ `
 
 ## Status
 
-Early. The skeleton runs end-to-end and 20 of the 21 v0.1 P0 tasks are done — see [docs/MVP_ISSUES.md](./docs/MVP_ISSUES.md) for the honest list of what is verified and what is not. Notably, **the Windows code paths have never been executed on Windows**, and CI has not yet run on GitHub.
+Early. The skeleton runs end-to-end, 20 of the 21 v0.1 P0 tasks are done, 34 unit tests.
+
+CI has run on GitHub: **macOS and Windows are both green on Node 24 and 25.** Node 22.5 failed on both platforms — `node:sqlite` requires `--experimental-sqlite` until 22.13 / 23.4, so the supported range has been corrected and the CLI now checks it at startup ([ADR-018](./docs/ADR.md)).
+
+See [docs/MVP_ISSUES.md](./docs/MVP_ISSUES.md) for the honest list of what is verified and what is not.
 
 ## License
 

@@ -12,7 +12,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [macos-latest, windows-latest]
-        node: ['22.5', '24', '25']
+        # node:sqlite 在 22.5 加入，但直到 22.13 / 23.4 才不再需要 --experimental-sqlite，
+        # 所以 22.13 是真正的下限（22.5 会挂，已在 CI 上验证过）。
+        node: ['22.13', '24', '25']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

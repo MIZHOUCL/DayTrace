@@ -4,9 +4,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { scanFiles, isSensitiveName, insideRepo, projectDirOf } from '../src/collect/files.js';
-import { dayRange } from '../src/time.js';
+import { dayRange, ymd } from '../src/time.js';
 
-const RANGE = dayRange(new Date().toISOString().slice(0, 10), 0);
+// 用本地日期而不是 toISOString().slice(0,10)：后者是 UTC 日期，
+// 在 UTC+8 的机器上凌晨跑会把窗口算到前一天，刚创建的文件就落在窗口外。
+const RANGE = dayRange(ymd(new Date()), 0);
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'daytrace-fs-'));
@@ -91,9 +93,13 @@ test('maxDepth 限制递归深度', () => {
 });
 
 test('projectDirOf 取 root 下第一层目录作为项目', () => {
-  const roots = [path.join('/code')];
-  assert.equal(projectDirOf(path.join('/code', 'foo', 'src', 'a.ts'), roots), path.join('/code', 'foo'));
-  assert.equal(projectDirOf(path.join('/code', 'top.md'), roots), '/code');
+  // 断言两边都必须走 path.resolve/join 构造：Windows 上 resolve('/code') 会变成 C:\code，
+  // 直接写 '/code' 这种 POSIX 字面量会让这条测试只在 macOS/Linux 通过。
+  const root = path.resolve(path.join(os.tmpdir(), 'dt-proj-root'));
+  const roots = [root];
+  assert.equal(projectDirOf(path.join(root, 'foo', 'src', 'a.ts'), roots), path.join(root, 'foo'));
+  assert.equal(projectDirOf(path.join(root, 'top.md'), roots), root, '文件直接躺在 root 里就把 root 当项目');
   // 不在任何 root 下时退回文件所在目录
-  assert.equal(projectDirOf(path.join('/elsewhere', 'x', 'y.ts'), roots), path.join('/elsewhere', 'x'));
+  const outside = path.resolve(path.join(os.tmpdir(), 'dt-other', 'x'));
+  assert.equal(projectDirOf(path.join(outside, 'y.ts'), roots), outside);
 });

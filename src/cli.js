@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { loadConfig, saveConfig, dataDir, dbPath, configPath, syncDirWarning } from './config.js';
-import { dayRange, multiDayRange, todayLocalDate, localDateOf } from './time.js';
+import { dayRange, multiDayRange, todayLocalDate, localDateOf, applyTimeZone, systemTimeZone, utcOffsetLabel } from './time.js';
 import { openDb, upsertEvidence } from './db.js';
 import { findRepos, collectRepo, gitAvailable, repoOf } from './collect/git.js';
 import { collectSessions } from './collect/sessions.js';
@@ -29,6 +29,7 @@ const USAGE = `daytrace — 把今天的工作痕迹整理成每句话都能点�
   --root <dir>      要扫描的目录，可重复；默认取配置或当前目录
   --out <dir>       把 Markdown 写到该目录（文件名 YYYY-MM-DD.md）
   --cutoff <hour>   本地日界小时，默认 4
+  --tz <IANA>       指定时区，如 Asia/Shanghai；默认跟随本机时区
   --author <s>      只统计该作者的 commit
   --no-files        关闭文件系统扫描（只看 git 与 AI 会话）
   --json            输出结构化 JSON 而不是 Markdown
@@ -42,6 +43,7 @@ const OPTIONS = {
   root: { type: 'string', multiple: true },
   out: { type: 'string' },
   cutoff: { type: 'string' },
+  tz: { type: 'string' },
   author: { type: 'string' },
   json: { type: 'boolean', default: false },
   'dry-run': { type: 'boolean', default: false },
@@ -66,6 +68,16 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   const cfg = loadConfig();
+  if (flags.tz) cfg.timezone = flags.tz;
+  // 时区必须在任何日期计算之前生效
+  let effectiveTz;
+  try {
+    effectiveTz = applyTimeZone(cfg.timezone);
+  } catch (err) {
+    process.stderr.write(`${err.message}\n`);
+    return 2;
+  }
+  cfg.effectiveTimezone = effectiveTz;
   if (flags.root?.length) cfg.roots = flags.root;
   if (flags.out) cfg.out = flags.out;
   if (flags.author) cfg.authorFilter = flags.author;
@@ -229,6 +241,8 @@ function runReport(cfg, range, flags) {
       cutoffHour: cfg.cutoffHour,
       repoCount: repos.length,
       fileScan: fileScanOn ? fileScan.stats : null,
+      timeZone: cfg.effectiveTimezone,
+      utcOffset: utcOffsetLabel(),
     });
 
     if (flags.json) {
@@ -343,7 +357,13 @@ function showEvidence(sid, flags) {
 }
 
 function where() {
-  process.stdout.write(`数据目录：${dataDir()}\n数据库：${dbPath()}\n配置：${configPath()}\n`);
+  const cfg = loadConfig();
+  const tz = applyTimeZone(cfg.timezone);
+  process.stdout.write(
+    `数据目录：${dataDir()}\n数据库：${dbPath()}\n配置：${configPath()}\n` +
+      `时区：${tz ?? '未知'}（UTC${utcOffsetLabel()}）${cfg.timezone ? '，来自 config.timezone' : '，跟随本机'}\n` +
+      `日界：每天本地 ${String(cfg.cutoffHour).padStart(2, '0')}:00\n`,
+  );
   const warn = syncDirWarning();
   if (warn) process.stdout.write(`\n警告：${warn}\n`);
   process.stdout.write('\n删除全部数据：daytrace purge --yes\n');

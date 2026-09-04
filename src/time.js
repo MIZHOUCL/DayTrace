@@ -12,6 +12,46 @@
 
 export const DEFAULT_CUTOFF_HOUR = 4;
 
+/** 本机时区（IANA 名，如 Asia/Shanghai）。取不到就返回 null。 */
+export function systemTimeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
+}
+
+/** 当前生效时区相对 UTC 的偏移，形如 +08:00。 */
+export function utcOffsetLabel(date = new Date()) {
+  const mins = -date.getTimezoneOffset();
+  const sign = mins >= 0 ? '+' : '-';
+  const abs = Math.abs(mins);
+  return `${sign}${String(Math.floor(abs / 60)).padStart(2, '0')}:${String(abs % 60).padStart(2, '0')}`;
+}
+
+/**
+ * 指定要用哪个时区跑。不传就用本机时区（默认行为）。
+ *
+ * 实现方式是设置 process.env.TZ —— Node 会让后续所有 Date 的本地时间行为
+ * 都走这个时区，于是日界折算、归属日、会话时间戳解析全都自动一致，
+ * 不需要把时区参数穿过每一个函数。
+ *
+ * @param {string|null|undefined} timeZone IANA 名，如 Asia/Shanghai
+ * @returns {string|null} 实际生效的时区
+ */
+export function applyTimeZone(timeZone) {
+  if (!timeZone) return systemTimeZone();
+  try {
+    // 非法名字必须立刻报错，不能静默退回 UTC 之类
+    new Intl.DateTimeFormat('en-US', { timeZone });
+  } catch {
+    throw new Error(`无法识别的时区：${timeZone}\n请用 IANA 名字，例如 Asia/Shanghai、Asia/Tokyo、America/New_York、UTC。`);
+  }
+  process.env.TZ = timeZone;
+  return timeZone;
+}
+
+
 /** @param {Date} date @returns {string} 本地时区的 YYYY-MM-DD */
 export function ymd(date) {
   const y = date.getFullYear();
@@ -24,15 +64,16 @@ export function ymd(date) {
  * 某个本地日期对应的 UTC 半开区间。
  * @param {string} localDate YYYY-MM-DD
  * @param {number} cutoffHour 本地日界小时，0-23
- * @returns {{localDate:string,startUtc:string,endUtc:string}}
+ * @returns {{localDate:string,startUtc:string,endUtc:string,timeZone:string|null}}
  */
 export function dayRange(localDate, cutoffHour = DEFAULT_CUTOFF_HOUR) {
   const [y, m, d] = localDate.split('-').map(Number);
   if (!y || !m || !d) throw new Error(`日期格式应为 YYYY-MM-DD，收到：${localDate}`);
-  // 用本地时间构造再转 UTC，夏令时由 Date 自行处理；d+1 的月末溢出也由 Date 处理。
+  // 走本地时间构造：生效时区由 applyTimeZone 决定（默认本机时区）。
+  // 夏令时与月末溢出都由 Date 自己处理。
   const start = new Date(y, m - 1, d, cutoffHour, 0, 0, 0);
   const end = new Date(y, m - 1, d + 1, cutoffHour, 0, 0, 0);
-  return { localDate, startUtc: start.toISOString(), endUtc: end.toISOString() };
+  return { localDate, startUtc: start.toISOString(), endUtc: end.toISOString(), timeZone: systemTimeZone() };
 }
 
 /**
@@ -75,7 +116,7 @@ export function multiDayRange(localDate, days = 7, cutoffHour = DEFAULT_CUTOFF_H
   const first = ymd(new Date(y, m - 1, d - (days - 1)));
   const a = dayRange(first, cutoffHour);
   const b = dayRange(localDate, cutoffHour);
-  return { localDate, startUtc: a.startUtc, endUtc: b.endUtc, days };
+  return { localDate, startUtc: a.startUtc, endUtc: b.endUtc, days, timeZone: b.timeZone };
 }
 
 /** 把区间拆成逐日的 localDate 列表。 */

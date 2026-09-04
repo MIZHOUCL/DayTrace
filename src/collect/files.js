@@ -17,7 +17,7 @@ export const EXTRA_SKIP_DIRS = new Set([
   'Library', 'AppData', 'Applications', 'System', 'Windows', 'Program Files',
   'Program Files (x86)', 'ProgramData', '$RECYCLE.BIN', 'System Volume Information',
   'Trash', '.Trash', 'Downloads.localized', 'Music', 'Movies', 'Pictures', 'Photos',
-  'site-packages', 'Cellar', 'go', 'pkg', 'bin', 'obj', 'tmp', 'temp', 'logs',
+  'site-packages', 'Cellar', 'pkg', 'obj', 'tmp', 'temp', 'logs',
 ]);
 
 /**

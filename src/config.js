@@ -39,6 +39,8 @@ export function defaultSessionDirs() {
 
 export const DEFAULTS = {
   cutoffHour: DEFAULT_CUTOFF_HOUR,
+  /** IANA 时区名。null = 用本机时区（推荐）。填了就固定用这个时区跑。 */
+  timezone: null,
   /** 要扫描 git 仓库的根目录，留空则用 cwd。 */
   roots: [],
   /** 只统计这个 author 的 commit（email 或 name 片段），null = 全部。 */

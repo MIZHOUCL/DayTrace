@@ -38,7 +38,7 @@ function footnoteLabel(ev) {
  *          report:any[], cutoffHour:number, repoCount:number}} input
  */
 export function renderMarkdown(input) {
-  const { localDate, projects, facts, evidenceIndex, report, cutoffHour, repoCount, fileScan } = input;
+  const { localDate, projects, facts, evidenceIndex, report, cutoffHour, repoCount, fileScan, timeZone, utcOffset } = input;
   const lines = [];
   lines.push(`# ${localDate}`, '');
 
@@ -51,7 +51,7 @@ export function renderMarkdown(input) {
       const label = r.status === 'ok' ? `${r.count} 个会话` : r.status === 'absent' ? '未安装或无数据' : `降级（${r.error ?? '解析失败'}）`;
       lines.push(`- ${r.id}：${label}`);
     }
-    lines.push('', `> 日界为本地时间 ${String(cutoffHour).padStart(2, '0')}:00，跨零点的工作会归到前一天。`, '');
+    lines.push('', `> 时区 ${timeZone ?? '本机'}（UTC${utcOffset ?? ''}），日界为本地时间 ${String(cutoffHour).padStart(2, '0')}:00，跨零点的工作会归到前一天。`, '');
     return lines.join('\n');
   }
 
@@ -108,7 +108,7 @@ export function renderMarkdown(input) {
   lines.push(
     `> 扫描范围：${scanned.join('｜')}。` +
       `${facts.length} 条事实：confirmed ${counts.confirmed ?? 0}，inferred ${counts.inferred ?? 0}，unverified ${counts.unverified ?? 0}。` +
-      `日界 ${String(cutoffHour).padStart(2, '0')}:00，全部时间戳按 UTC 存储。`,
+      `时区 ${timeZone ?? '本机'}（UTC${utcOffset ?? ''}），日界 ${String(cutoffHour).padStart(2, '0')}:00，全部时间戳按 UTC 存储。`,
     '',
   );
   return lines.join('\n');

@@ -68,13 +68,17 @@ DayTrace bets on one thing none of them do: **per-sentence traceability** — ev
 | `daytrace init` | Write a default config file |
 | `daytrace purge --yes` | Delete all local data |
 
-Common flags: `--root <dir>` (repeatable), `--out <dir>`, `--cutoff <hour>`, `--author <name-or-email>`, `--json`, `--dry-run`.
+Common flags: `--root <dir>` (repeatable), `--out <dir>`, `--cutoff <hour>`, `--tz <IANA zone>`, `--author <name-or-email>`, `--no-files`, `--json`, `--dry-run`.
 
 Pass `--author` when working in shared repositories, otherwise other people's commits end up in your journal.
 
 ## About "today"
 
-`--cutoff` is the local day boundary, **04:00** by default: code written at 2am counts as the previous day. All timestamps are stored in UTC and the owning date is derived separately, so changing time zones never rewrites your data.
+`--cutoff` is the local day boundary, **04:00** by default: code written at 2am counts as the previous day.
+
+**The time zone follows your machine by default** — no configuration needed. `daytrace where` prints the zone and offset currently in effect, and so does the journal footer. To pin a zone regardless of where the machine is, pass `--tz Asia/Shanghai` or set `"timezone"` in `config.json`; only IANA names are accepted (`UTC+8` is rejected rather than silently treated as UTC).
+
+All timestamps are stored in UTC and the owning date is derived separately, so changing zones only regroups — it never rewrites data. DST is handled: `America/New_York` gets a 23-hour day on 2026-03-08 and a 25-hour day on 2026-11-01, with tests to prove it.
 
 ## Privacy defaults
 
@@ -90,7 +94,7 @@ Data directory: `~/Library/Application Support/daytrace` on macOS, `%APPDATA%\da
 ## Development
 
 ```bash
-node --test          # 43 tests, zero dependencies
+node --test          # 48 tests, zero dependencies
 node bin/daytrace.js today --dry-run   # no database writes, no files written
 ```
 

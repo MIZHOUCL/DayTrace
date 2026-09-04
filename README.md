@@ -78,7 +78,7 @@ CI 已在 GitHub 上跑过：**macOS 与 Windows 在 Node 24 / 25 上全绿**。
 | `daytrace init` | 写出默认配置文件 |
 | `daytrace purge --yes` | 删除全部本地数据 |
 
-常用选项：`--root <dir>`（可重复）、`--out <dir>`、`--cutoff <小时>`、`--author <名字或邮箱>`、`--no-files`、`--json`、`--dry-run`。
+常用选项：`--root <dir>`（可重复）、`--out <dir>`、`--cutoff <小时>`、`--tz <IANA 时区>`、`--author <名字或邮箱>`、`--no-files`、`--json`、`--dry-run`。
 
 **`--root` 是最重要的一个**：它决定去哪里找 git 仓库和文件改动。不给的话默认只看当前目录，如果当前目录不是你的项目目录，日志里就只有 AI 会话。
 
@@ -86,7 +86,13 @@ CI 已在 GitHub 上跑过：**macOS 与 Windows 在 Node 24 / 25 上全绿**。
 
 ## 关于「今天」
 
-`--cutoff` 是本地日界，默认 **04:00**：凌晨两点写的代码算前一天。所有时间戳按 UTC 存储，归属日单独折算，换时区不会改动原始数据。
+`--cutoff` 是本地日界，默认 **04:00**：凌晨两点写的代码算前一天。
+
+**时区默认跟随你这台电脑**，不需要配置 —— 在 UTC+8 的机器上 `daytrace today` 就按 UTC+8 判断"今天"。`daytrace where` 会把当前生效的时区和偏移打印出来，日志页脚也会写明。
+
+想固定用某个时区（比如出差换了时区但希望日志仍按公司时区归属），用 `--tz Asia/Shanghai` 或在 `config.json` 里写 `"timezone": "Asia/Shanghai"`。只接受 IANA 名字（`Asia/Shanghai`、`America/New_York`、`UTC`），写 `UTC+8` 这种会直接报错而不是静默按 UTC 跑。
+
+所有时间戳按 UTC 存库，归属日单独折算，所以换时区只影响分组，不改动原始数据。夏令时也是对的：`America/New_York` 在 2026-03-08 只有 23 小时、2026-11-01 有 25 小时，有测试盯着。
 
 ## 隐私默认值
 
@@ -106,6 +112,7 @@ CI 已在 GitHub 上跑过：**macOS 与 Windows 在 Node 24 / 25 上全绿**。
 ```json
 {
   "cutoffHour": 4,
+  "timezone": null,
   "roots": ["/Users/me/code"],
   "authorFilter": "me@example.com",
   "out": "/Users/me/Obsidian/daily",
@@ -120,7 +127,7 @@ CI 已在 GitHub 上跑过：**macOS 与 Windows 在 Node 24 / 25 上全绿**。
 ## 开发
 
 ```bash
-node --test          # 43 个测试，零依赖
+node --test          # 48 个测试，零依赖
 node --check src/cli.js
 node bin/daytrace.js today --dry-run   # 不写库、不写文件
 ```

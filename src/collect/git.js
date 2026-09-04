@@ -27,7 +27,8 @@ export function gitAvailable() {
 }
 
 function git(repo, args) {
-  return execFileSync('git', args, {
+  // core.quotePath=false：否则中文/非 ASCII 路径会被 git 转义成 \346\216\245 这种八进制串
+  return execFileSync('git', ['-c', 'core.quotePath=false', ...args], {
     cwd: repo,
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
@@ -35,10 +36,14 @@ function git(repo, args) {
   });
 }
 
-function gitSafe(repo, args, fallback = '') {
+function gitSafe(repo, args, fallback = '', warnings) {
   try {
     return git(repo, args);
-  } catch {
+  } catch (err) {
+    // 不要静默吞掉：`git status --no-color` 这种「未知选项」曾经让工作树证据整体消失，
+    // 而调用方完全看不出来。失败一律登记，由 CLI 打印出来。
+    const detail = String(err?.stderr || err?.message || err).split('\n')[0];
+    if (warnings) warnings.push(`git ${args[0]} 在 ${repo} 失败：${detail}`);
     return fallback;
   }
 }
@@ -93,7 +98,8 @@ export function repoOf(somePath) {
  * @param {{authorFilter?:string|null}} [opts]
  */
 export function collectRepo(repo, range, opts = {}) {
-  const branch = gitSafe(repo, ['rev-parse', '--abbrev-ref', 'HEAD'], '').trim() || null;
+  const warnings = [];
+  const branch = gitSafe(repo, ['rev-parse', '--abbrev-ref', 'HEAD'], '', warnings).trim() || null;
   const args = [
     'log',
     `--since=${range.startUtc}`,
@@ -103,10 +109,11 @@ export function collectRepo(repo, range, opts = {}) {
     `--pretty=format:${RS}%H${US}%an${US}%ae${US}%aI${US}%s`,
   ];
   if (opts.authorFilter) args.push(`--author=${opts.authorFilter}`);
-  const raw = gitSafe(repo, args, '');
+  const raw = gitSafe(repo, args, '', warnings);
   const commits = parseLog(raw);
-  const dirty = parseStatus(gitSafe(repo, ['status', '--porcelain=v1', '--no-color'], ''));
-  return { repo, branch, commits, dirty };
+  // 注意：git status 不接受 --no-color（--porcelain 本身就不带颜色），加了会整条命令失败
+  const dirty = parseStatus(gitSafe(repo, ['status', '--porcelain=v1'], '', warnings));
+  return { repo, branch, commits, dirty, warnings };
 }
 
 /** 解析 `git log --numstat` 的输出。 */

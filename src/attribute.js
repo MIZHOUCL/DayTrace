@@ -54,6 +54,10 @@ export function buildProjects(repos, sessions, opts = {}) {
     const owner = repoContaining(s.cwd, [...byRoot.keys()]);
     if (!owner) add(s.cwd);
   }
+  // 文件系统扫描发现的目录（不在任何仓库内）同样算项目
+  for (const d of opts.extraDirs ?? []) {
+    if (!repoContaining(d, [...byRoot.keys()])) add(d);
+  }
   const projects = [...byRoot.values()];
   // 用户规则最后应用，覆盖自动结果
   for (const rule of opts.rules ?? []) {

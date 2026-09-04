@@ -48,6 +48,8 @@ export const DEFAULTS = {
   sessionDirs: null,
   /** true 时永久禁用一切外发（ADR-008 §8.4）。 */
   managedDevice: false,
+  /** 文件系统扫描（ADR-019）。只记路径与时间，不读正文。 */
+  fileScan: { enabled: true, maxDepth: 6, maxFiles: 5000, extraExcludes: [] },
   ai: { enabled: false, provider: null, model: null },
 };
 
@@ -70,6 +72,7 @@ export function loadConfig() {
   const cfg = { ...DEFAULTS, ...onDisk };
   cfg.sessionDirs = { ...defaultSessionDirs(), ...(onDisk.sessionDirs || {}) };
   cfg.ai = { ...DEFAULTS.ai, ...(onDisk.ai || {}) };
+  cfg.fileScan = { ...DEFAULTS.fileScan, ...(onDisk.fileScan || {}) };
   if (!Array.isArray(cfg.roots) || cfg.roots.length === 0) cfg.roots = [process.cwd()];
   if (!Number.isInteger(cfg.cutoffHour) || cfg.cutoffHour < 0 || cfg.cutoffHour > 23) {
     cfg.cutoffHour = DEFAULT_CUTOFF_HOUR;

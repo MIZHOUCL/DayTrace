@@ -38,7 +38,7 @@ function footnoteLabel(ev) {
  *          report:any[], cutoffHour:number, repoCount:number}} input
  */
 export function renderMarkdown(input) {
-  const { localDate, projects, facts, evidenceIndex, report, cutoffHour, repoCount } = input;
+  const { localDate, projects, facts, evidenceIndex, report, cutoffHour, repoCount, fileScan } = input;
   const lines = [];
   lines.push(`# ${localDate}`, '');
 
@@ -46,6 +46,7 @@ export function renderMarkdown(input) {
     lines.push('无可记录活动。', '');
     lines.push('已检查的来源：');
     lines.push(`- git 仓库 ${repoCount} 个`);
+    if (fileScan) lines.push(`- 文件扫描：${fileScan.dirs} 个目录、${fileScan.scanned} 个文件，其中 ${fileScan.skippedInRepo} 个在 git 仓库内已交给 git 处理`);
     for (const r of report) {
       const label = r.status === 'ok' ? `${r.count} 个会话` : r.status === 'absent' ? '未安装或无数据' : `降级（${r.error ?? '解析失败'}）`;
       lines.push(`- ${r.id}：${label}`);
@@ -79,7 +80,8 @@ export function renderMarkdown(input) {
       const refs = f.source_ids.slice(0, 6).map((sid) => `[^ev${refOf(sid)}]`).join('');
       const mark = f.confidence === 'confirmed' ? '' : ` \`${f.confidence}\``;
       const hint = f.confidence === 'unverified' ? '（无法关联来源，请确认或删除）' : '';
-      lines.push(`- ${defuseMarkdown(f.text)}${refs}${mark}${hint}`);
+      const indent = '  '.repeat(f.depth ?? 0);
+      lines.push(`${indent}- ${defuseMarkdown(f.text)}${refs}${mark}${hint}`);
     }
     lines.push('');
   }
@@ -94,8 +96,18 @@ export function renderMarkdown(input) {
     acc[f.confidence] = (acc[f.confidence] ?? 0) + 1;
     return acc;
   }, {});
+  const scanned = [`git 仓库 ${repoCount} 个`];
+  if (fileScan) {
+    scanned.push(`文件扫描 ${fileScan.dirs} 个目录${fileScan.truncated ? '（已截断）' : ''}`);
+  } else {
+    scanned.push('文件扫描 已关闭');
+  }
+  for (const r of report) {
+    scanned.push(`${r.id} ${r.status === 'ok' ? `${r.count} 个会话` : r.status === 'absent' ? '无数据' : '降级'}`);
+  }
   lines.push(
-    `> ${facts.length} 条事实：confirmed ${counts.confirmed ?? 0}，inferred ${counts.inferred ?? 0}，unverified ${counts.unverified ?? 0}。` +
+    `> 扫描范围：${scanned.join('｜')}。` +
+      `${facts.length} 条事实：confirmed ${counts.confirmed ?? 0}，inferred ${counts.inferred ?? 0}，unverified ${counts.unverified ?? 0}。` +
       `日界 ${String(cutoffHour).padStart(2, '0')}:00，全部时间戳按 UTC 存储。`,
     '',
   );

@@ -9,8 +9,9 @@ import { dayRange, multiDayRange, todayLocalDate, localDateOf } from './time.js'
 import { openDb, upsertEvidence } from './db.js';
 import { findRepos, collectRepo, gitAvailable, repoOf } from './collect/git.js';
 import { collectSessions } from './collect/sessions.js';
+import { scanFiles, projectDirOf } from './collect/files.js';
 import { buildProjects, attributeSession, repoContaining, projectIdOf } from './attribute.js';
-import { evidenceFromGit, evidenceFromSession, buildFacts, validateReferences, sourceId } from './facts.js';
+import { evidenceFromGit, evidenceFromSession, evidenceFromFiles, buildFacts, validateReferences, sourceId } from './facts.js';
 import { renderMarkdown } from './render.js';
 
 const USAGE = `daytrace — 把今天的工作痕迹整理成每句话都能点回证据的日志
@@ -29,6 +30,7 @@ const USAGE = `daytrace — 把今天的工作痕迹整理成每句话都能点�
   --out <dir>       把 Markdown 写到该目录（文件名 YYYY-MM-DD.md）
   --cutoff <hour>   本地日界小时，默认 4
   --author <s>      只统计该作者的 commit
+  --no-files        关闭文件系统扫描（只看 git 与 AI 会话）
   --json            输出结构化 JSON 而不是 Markdown
   --dry-run         不写数据库、不写文件
   --yes             purge 的确认标志
@@ -43,6 +45,7 @@ const OPTIONS = {
   author: { type: 'string' },
   json: { type: 'boolean', default: false },
   'dry-run': { type: 'boolean', default: false },
+  'no-files': { type: 'boolean', default: false },
   yes: { type: 'boolean', default: false },
   help: { type: 'boolean', short: 'h', default: false },
 };
@@ -115,19 +118,54 @@ function runReport(cfg, range, flags) {
   }
 
   const repos = gitAvailable() ? findRepos(cfg.roots) : [];
+  if (!repos.length && !flags.json) {
+    process.stderr.write(
+      `提示：以下目录里没有找到 git 仓库，所以这份日志不含任何 commit 证据。\n${cfg.roots.map((r) => `  ${r}`).join('\n')}\n` +
+        `把 --root 指向你真正写代码的目录（可重复），例如：\n` +
+        `  daytrace today --root ~/code --root ~/work\n` +
+        `或者跑一次 daytrace init，把目录写进 config.json 的 roots，以后就不用带参数了。\n\n`,
+    );
+  }
   const { sessions, report } = collectSessions(cfg.sessionDirs, range, cfg.cutoffHour);
-  const projects = buildProjects(repos, sessions, { rules: cfg.rules });
+
+  // 文件系统扫描：仓库外的改动由它负责，仓库内的交给 git，避免重复计数（ADR-019）
+  const fileScanOn = cfg.fileScan?.enabled !== false && !flags['no-files'];
+  const fileScan = fileScanOn
+    ? scanFiles(cfg.roots, range, {
+        repos,
+        maxDepth: cfg.fileScan?.maxDepth ?? 6,
+        maxFiles: cfg.fileScan?.maxFiles ?? 5000,
+        extraExcludes: cfg.fileScan?.extraExcludes ?? [],
+      })
+    : { hits: [], stats: { scanned: 0, dirs: 0, skippedInRepo: 0, skippedSensitive: 0, truncated: false } };
+  if (!flags.json && fileScanOn) {
+    const s = fileScan.stats;
+    if (s.truncated) {
+      process.stderr.write(`文件扫描达到上限 ${cfg.fileScan?.maxFiles ?? 5000} 个，结果已截断。调大 config.json 的 fileScan.maxFiles 可放宽。\n`);
+    }
+    if (s.skippedSensitive) process.stderr.write(`已跳过 ${s.skippedSensitive} 个疑似敏感文件（连路径都不记录）。\n`);
+  }
+
+  const projects = buildProjects(repos, sessions, {
+    rules: cfg.rules,
+    extraDirs: [...new Set(fileScan.hits.map((h) => projectDirOf(h.path, cfg.roots)))],
+  });
 
   const gitByProject = new Map();
   const isToday = range.localDate === todayLocalDate(cfg.cutoffHour);
+  const gitWarnings = [];
   for (const repo of repos) {
     const result = collectRepo(repo, range, { authorFilter: cfg.authorFilter });
+    gitWarnings.push(...(result.warnings ?? []));
     // 未提交改动属于「现在」，生成过去某天的日志时不能算进去
     if (!isToday) result.dirty = [];
     const id = projectIdOf(repo);
     if (!result.commits.length && !result.dirty.length) continue;
     if (!gitByProject.has(id)) gitByProject.set(id, []);
     gitByProject.get(id).push(result);
+  }
+  if (gitWarnings.length && !flags.json) {
+    process.stderr.write(`git 采集有 ${gitWarnings.length} 处失败（证据可能不完整）：\n${gitWarnings.slice(0, 5).map((w) => `  ${w}`).join('\n')}\n\n`);
   }
 
   const sessionsByProject = new Map();
@@ -140,6 +178,14 @@ function runReport(cfg, range, flags) {
     s.projectId = pid;
     if (!sessionsByProject.has(pid)) sessionsByProject.set(pid, []);
     sessionsByProject.get(pid).push(s);
+  }
+
+  const filesByProject = new Map();
+  const projectIdForFile = (p) => projectIdOf(projectDirOf(p, cfg.roots));
+  for (const h of fileScan.hits) {
+    const pid = projectIdForFile(h.path);
+    if (!filesByProject.has(pid)) filesByProject.set(pid, []);
+    filesByProject.get(pid).push(h);
   }
 
   const db = openDb(flags['dry-run'] ? ':memory:' : dbPath());
@@ -162,9 +208,13 @@ function runReport(cfg, range, flags) {
         evidenceIndex.set(sourceId(row.source_type, row.source_ref), row);
       }
     }
+    for (const row of evidenceFromFiles(fileScan.hits, projectIdForFile, cfg.cutoffHour)) {
+      upsertEvidence(db, row);
+      evidenceIndex.set(sourceId(row.source_type, row.source_ref), row);
+    }
 
     const localDate = range.localDate;
-    const facts = buildFacts({ projects, gitByProject, sessionsByProject }, localDate);
+    const facts = buildFacts({ projects, gitByProject, sessionsByProject, filesByProject }, localDate);
     const { downgraded, missing } = validateReferences(db, facts, localDate);
     if (downgraded && !flags.json) {
       process.stderr.write(`引用校验：${downgraded} 条事实因来源缺失被降级为 unverified\n`);
@@ -178,10 +228,11 @@ function runReport(cfg, range, flags) {
       report,
       cutoffHour: cfg.cutoffHour,
       repoCount: repos.length,
+      fileScan: fileScanOn ? fileScan.stats : null,
     });
 
     if (flags.json) {
-      process.stdout.write(`${JSON.stringify({ localDate, range, repos, report, projects, facts, downgraded, missing }, null, 2)}\n`);
+      process.stdout.write(`${JSON.stringify({ localDate, range, repos, report, fileScan, projects, facts, downgraded, missing }, null, 2)}\n`);
     } else {
       process.stdout.write(`${markdown}\n`);
     }

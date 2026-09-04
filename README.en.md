@@ -28,6 +28,7 @@ Requires Node ≥ 22.13 (or ≥ 23.4 on the 23.x line) — that is when `node:sq
 ```text
 daytrace today
   → reads git: today's commits, diff --stat, working-tree status
+  → scans files: today's changes outside git repos under --root (path and time only)
   → reads local AI sessions: ~/.claude/projects/**, ~/.codex/sessions/**
   → groups them by project using each session's cwd / gitBranch
   → generates footnoted Markdown with pure rules (zero model calls)
@@ -77,7 +78,8 @@ Pass `--author` when working in shared repositories, otherwise other people's co
 
 ## Privacy defaults
 
-- Reads only three kinds of location: the git repositories you point it at, `~/.claude/projects`, `~/.codex/sessions`.
+- Reads only what you point it at: directories under `--root` (git repos plus file changes outside them), `~/.claude/projects`, `~/.codex/sessions`. Never scans your whole disk.
+- The file scan records **path, mtime and size only** — never contents. It skips dotfiles, heavy directories like `node_modules`, and likely-secret files (`.env`, `*.pem`, `id_rsa`) without even recording their paths. Disable it entirely with `--no-files`.
 - Reads git metadata and **your own session prompts** only — never file contents, never diff bodies, never assistant replies.
 - **There is no network code in this repository at all** (`grep -rE "fetch\(|node:http" src` comes back empty; CI enforces it).
 - Data lives in a local SQLite file. `daytrace where` shows it, `daytrace purge --yes` removes it.
@@ -88,7 +90,7 @@ Data directory: `~/Library/Application Support/daytrace` on macOS, `%APPDATA%\da
 ## Development
 
 ```bash
-node --test          # 34 tests, zero dependencies
+node --test          # 43 tests, zero dependencies
 node bin/daytrace.js today --dry-run   # no database writes, no files written
 ```
 

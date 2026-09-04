@@ -100,8 +100,54 @@ test('buildFacts 产出的 source_id 与证据行严格对得上（端到端）'
   );
   const res = validateReferences(db, facts, localDate);
   assert.equal(res.downgraded, 0, `不应有降级，missing=${JSON.stringify(res.missing)}`);
-  assert.equal(facts.length, 3); // 1 commit + 1 工作树 + 1 会话
   assert.ok(facts.every((f) => f.confidence === 'confirmed'));
+  // 一个会话要展开成多条：概览 + 每条提问 + 改动文件（+ 命令），不能塌成一条
+  const texts = facts.map((f) => f.text);
+  assert.ok(texts.some((t) => t.includes('提交「修好了扫描器」')), '缺 commit 事实');
+  assert.ok(texts.some((t) => t.includes('工作树有未提交改动')), '缺工作树事实');
+  assert.ok(texts.some((t) => t.includes('提问 1 条')), '缺会话概览');
+  assert.ok(texts.some((t) => t === '帮我改扫描器'), '缺逐条提问');
+  assert.ok(texts.some((t) => t.startsWith('改动文件：')), '缺改动文件');
+  assert.ok(facts.some((f) => f.depth === 1), '会话明细应缩进一级');
+  db.close();
+});
+
+test('会话有几十条提问时逐条展开，超出上限的折叠成一行', async () => {
+  const { MAX_PROMPTS_SHOWN } = await import('../src/facts.js');
+  const db = openDb(':memory:');
+  const localDate = '2026-09-03';
+  const n = MAX_PROMPTS_SHOWN + 7;
+  const session = {
+    providerId: 'codex',
+    sessionId: 'sess-many',
+    title: null,
+    cwd: '/tmp/demo',
+    prompts: Array.from({ length: n }, (_, i) => ({
+      index: i + 1,
+      text: `第 ${i + 1} 个问题`,
+      ts: '2026-09-03T07:00:00.000Z',
+      localDate,
+    })),
+    actions: [],
+    firstTs: '2026-09-03T07:00:00.000Z',
+  };
+  for (const row of evidenceFromSession(session, 'demo', 4)) upsertEvidence(db, row);
+  const facts = buildFacts(
+    {
+      projects: [{ id: 'demo', name: 'demo', rootPath: '/tmp/demo' }],
+      gitByProject: new Map(),
+      sessionsByProject: new Map([['demo', [session]]]),
+    },
+    localDate,
+  );
+  const res = validateReferences(db, facts, localDate);
+  assert.equal(res.downgraded, 0, `missing=${JSON.stringify(res.missing)}`);
+  assert.ok(facts[0].text.includes(`提问 ${n} 条`), `概览要报总数，实际：${facts[0].text}`);
+  const detail = facts.filter((f) => f.depth === 1);
+  assert.equal(detail.length, MAX_PROMPTS_SHOWN + 1, '逐条展开到上限，外加一条折叠说明');
+  assert.ok(detail.at(-1).text.includes(`另有 ${n - MAX_PROMPTS_SHOWN} 条提问`), detail.at(-1).text);
+  // Codex 没有正式标题，不该拿用户某句话冒充
+  assert.ok(!facts[0].text.includes('第 1 个问题'), '概览不该把用户提问当标题');
   db.close();
 });
 

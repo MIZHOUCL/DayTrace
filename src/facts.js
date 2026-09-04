@@ -27,6 +27,12 @@ export function shortLabel(text, max = 40) {
   return t.length > max ? `${t.slice(0, max)}…` : t;
 }
 
+/** 单个会话最多逐条列出多少条提问，其余折叠成一行。 */
+export const MAX_PROMPTS_SHOWN = 12;
+
+/** 单个项目最多逐个列出多少个改动文件，其余折叠成一行。 */
+export const MAX_FILES_SHOWN = 15;
+
 /** git 采集结果 → 证据行。 */
 export function evidenceFromGit(repoResult, projectId, cutoffHour, nowIso) {
   const rows = [];
@@ -57,8 +63,22 @@ export function evidenceFromGit(repoResult, projectId, cutoffHour, nowIso) {
   return rows;
 }
 
-/** 会话 → 证据行。用户输入是 L1，不含助手回复。 */
-export function evidenceFromSession(session, projectId, cutoffHour) {
+/** 文件系统扫描结果 → 证据行（只有路径与时间，没有正文）。 */
+export function evidenceFromFiles(hits, projectIdFor, cutoffHour) {
+  return hits.map((h) => ({
+    source_type: 'file',
+    source_ref: h.path,
+    project_id: projectIdFor(h.path),
+    path: h.path,
+    path_alias: baseName(h.path),
+    occurred_at: h.mtime,
+    local_date: localDateOf(h.mtime, cutoffHour),
+    level: 'L0',
+    excerpt: `${h.size} bytes`,
+  }));
+}
+
+/** 会话 → 证据行。用户输入是 L1，不含助手回复。 */export function evidenceFromSession(session, projectId, cutoffHour) {
   const rows = [];
   for (const p of session.prompts) {
     rows.push({
@@ -94,7 +114,7 @@ export function evidenceFromSession(session, projectId, cutoffHour) {
  */
 export function buildFacts(input, localDate) {
   const facts = [];
-  const push = (projectId, text, ids, confidence, occurredAt) => {
+  const push = (projectId, text, ids, confidence, occurredAt, depth = 0) => {
     facts.push({
       id: `fact:${projectId}:${facts.length}`,
       project_id: projectId,
@@ -103,6 +123,7 @@ export function buildFacts(input, localDate) {
       confidence,
       occurred_at: occurredAt ?? null,
       local_date: localDate,
+      depth,
     });
   };
 
@@ -129,21 +150,127 @@ export function buildFacts(input, localDate) {
     }
 
     for (const s of sessions) {
-      const first = s.prompts[0];
-      const label = shortLabel(s.title || first?.text || '（无标题会话）');
-      const ids = [];
-      if (first) ids.push(sourceId('session', `${s.sessionId}#${first.index}`));
-      const files = [...new Set(s.actions.filter((a) => a.kind === 'file').map((a) => a.value))];
-      for (const a of s.actions.filter((x) => x.kind === 'file').slice(0, 20)) {
-        ids.push(sourceId('session-action', `${s.sessionId}#${a.index}:${a.kind}:${a.value}`));
-      }
-      const suffix = files.length ? `，改动 ${files.length} 个文件` : '';
-      const providerLabel = s.providerId === 'codex' ? 'Codex' : 'Claude Code';
-      push(project.id, `${providerLabel} 会话：${label}${suffix}`, ids, ids.length ? 'confirmed' : 'unverified', s.firstTs);
+      pushSessionFacts(push, project.id, s);
     }
+
+    const fileHits = input.filesByProject?.get(project.id) ?? [];
+    if (fileHits.length) pushFileFacts(push, project, fileHits);
   }
 
   return facts;
+}
+
+/** 文件系统改动 → 事实。概览 + 逐个文件（超出上限折叠）。 */
+function pushFileFacts(push, project, hits) {
+  const ids = hits.map((h) => sourceId('file', h.path));
+  push(
+    project.id,
+    `改动 ${hits.length} 个文件（不在 git 仓库内，按文件修改时间）`,
+    ids.slice(0, 6),
+    'confirmed',
+    hits[0].mtime,
+    0,
+  );
+  const shown = hits.slice(0, MAX_FILES_SHOWN);
+  for (const h of shown) {
+    push(project.id, relativeTo(project.rootPath, h.path), [sourceId('file', h.path)], 'confirmed', h.mtime, 1);
+  }
+  if (hits.length > shown.length) {
+    const rest = hits.slice(shown.length);
+    push(
+      project.id,
+      `另有 ${rest.length} 个文件（用 --json 看完整列表）`,
+      rest.slice(0, 20).map((h) => sourceId('file', h.path)),
+      'confirmed',
+      rest[0].mtime,
+      1,
+    );
+  }
+}
+
+/** 尽量显示相对路径，读起来短；拿不到相对关系就退回文件名。 */
+function relativeTo(rootPath, filePath) {
+  if (!rootPath) return baseName(filePath);
+  const norm = (p) => String(p).replace(/[/\\]+$/, '');
+  const root = norm(rootPath);
+  if (filePath.startsWith(`${root}/`) || filePath.startsWith(`${root}\\`)) {
+    return filePath.slice(root.length + 1);
+  }
+  return baseName(filePath);
+}
+
+/** 一个会话展开成多条事实：概览 + 每条提问 + 改动文件 + 执行命令。 */
+function pushSessionFacts(push, projectId, s) {
+  const providerLabel = s.providerId === 'codex' ? 'Codex' : 'Claude Code';
+  const shortId = String(s.sessionId).slice(0, 8);
+  // 只有 Claude Code 的 ai-title 是真标题；Codex 没有标题，不要拿用户某句话冒充
+  const label = s.title ? `「${shortLabel(s.title, 50)}」` : ` \`${shortId}\``;
+
+  const files = [...new Set(s.actions.filter((a) => a.kind === 'file').map((a) => a.value))];
+  const commands = s.actions.filter((a) => a.kind === 'command');
+  const overviewIds = [];
+  if (s.prompts[0]) overviewIds.push(sourceId('session', `${s.sessionId}#${s.prompts[0].index}`));
+
+  const parts = [];
+  if (s.prompts.length) parts.push(`提问 ${s.prompts.length} 条`);
+  if (files.length) parts.push(`改动 ${files.length} 个文件`);
+  if (commands.length) parts.push(`执行 ${commands.length} 条命令`);
+  push(
+    projectId,
+    `${providerLabel} 会话${label}：${parts.join('、') || '无可提取内容'}`,
+    overviewIds,
+    overviewIds.length ? 'confirmed' : 'unverified',
+    s.firstTs,
+    0,
+  );
+
+  // 逐条列出用户提问 —— 这是日志的正文，不能只留第一条
+  const shownPrompts = s.prompts.slice(0, MAX_PROMPTS_SHOWN);
+  for (const p of shownPrompts) {
+    push(projectId, shortLabel(p.text, 90), [sourceId('session', `${s.sessionId}#${p.index}`)], 'confirmed', p.ts, 1);
+  }
+  if (s.prompts.length > shownPrompts.length) {
+    const rest = s.prompts.slice(shownPrompts.length);
+    push(
+      projectId,
+      `另有 ${rest.length} 条提问（用 daytrace show session:${s.sessionId}#<序号> 查看）`,
+      rest.map((p) => sourceId('session', `${s.sessionId}#${p.index}`)),
+      'confirmed',
+      rest[0].ts,
+      1,
+    );
+  }
+
+  if (files.length) {
+    const shown = files.slice(0, 8);
+    const more = files.length > shown.length ? ` 等 ${files.length} 个` : '';
+    push(
+      projectId,
+      `改动文件：${shown.map(baseName).join('、')}${more}`,
+      s.actions.filter((a) => a.kind === 'file').slice(0, 20).map((a) => sourceId('session-action', `${s.sessionId}#${a.index}:${a.kind}:${a.value}`)),
+      'confirmed',
+      null,
+      1,
+    );
+  }
+  if (commands.length) {
+    const shown = commands.slice(0, 5);
+    const more = commands.length > shown.length ? ` 等 ${commands.length} 条` : '';
+    push(
+      projectId,
+      `执行命令：${shown.map((c) => `\`${c.value}\``).join('、')}${more}`,
+      shown.map((c) => sourceId('session-action', `${s.sessionId}#${c.index}:${c.kind}:${c.value}`)),
+      'confirmed',
+      null,
+      1,
+    );
+  }
+}
+
+/** 展示文件名而不是整条绝对路径，完整路径留在脚注里。 */
+function baseName(p) {
+  const parts = String(p).split(/[/\\]/);
+  return parts[parts.length - 1] || p;
 }
 
 /**

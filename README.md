@@ -28,6 +28,7 @@ daytrace today
 ```text
 daytrace today
   → 读 git：当日 commit + diff --stat + 工作树状态
+  → 扫文件：--root 下仓库外今天改动过的文件（只记路径与时间）
   → 读本地 AI 会话：~/.claude/projects/**、~/.codex/sessions/**
   → 按会话的 cwd / gitBranch 归到项目
   → 纯规则生成带脚注引用的 Markdown（零模型调用）
@@ -77,7 +78,9 @@ CI 已在 GitHub 上跑过：**macOS 与 Windows 在 Node 24 / 25 上全绿**。
 | `daytrace init` | 写出默认配置文件 |
 | `daytrace purge --yes` | 删除全部本地数据 |
 
-常用选项：`--root <dir>`（可重复）、`--out <dir>`、`--cutoff <小时>`、`--author <名字或邮箱>`、`--json`、`--dry-run`。
+常用选项：`--root <dir>`（可重复）、`--out <dir>`、`--cutoff <小时>`、`--author <名字或邮箱>`、`--no-files`、`--json`、`--dry-run`。
+
+**`--root` 是最重要的一个**：它决定去哪里找 git 仓库和文件改动。不给的话默认只看当前目录，如果当前目录不是你的项目目录，日志里就只有 AI 会话。
 
 在公共仓库里工作时建议加 `--author`，否则会把别人的 commit 也算进你的日志。
 
@@ -87,7 +90,8 @@ CI 已在 GitHub 上跑过：**macOS 与 Windows 在 Node 24 / 25 上全绿**。
 
 ## 隐私默认值
 
-- 只读三类位置：你指定的 git 仓库、`~/.claude/projects`、`~/.codex/sessions`。
+- 只读你指定的位置：`--root` 下的目录（git 仓库 + 仓库外的文件改动）、`~/.claude/projects`、`~/.codex/sessions`。不扫全盘。
+- 文件扫描只记**路径、修改时间、大小**，不读内容；跳过点文件、`node_modules` 这类体积目录、以及 `.env` / `*.pem` / `id_rsa` 这类疑似敏感文件（连路径都不记）。`--no-files` 可整体关闭。
 - 只读 git 元数据与**会话里的用户输入**；不读文件正文、不读 diff 正文、不读助手回复。
 - **代码里没有任何网络调用**（可自行 `grep -rE "fetch\(|node:http" src`）。
 - 数据只存本地 SQLite。`daytrace where` 看位置，`daytrace purge --yes` 彻底删除。
@@ -105,6 +109,7 @@ CI 已在 GitHub 上跑过：**macOS 与 Windows 在 Node 24 / 25 上全绿**。
   "roots": ["/Users/me/code"],
   "authorFilter": "me@example.com",
   "out": "/Users/me/Obsidian/daily",
+  "fileScan": { "enabled": true, "maxDepth": 6, "maxFiles": 5000, "extraExcludes": [] },
   "managedDevice": false,
   "ai": { "enabled": false }
 }
@@ -115,7 +120,7 @@ CI 已在 GitHub 上跑过：**macOS 与 Windows 在 Node 24 / 25 上全绿**。
 ## 开发
 
 ```bash
-node --test          # 34 个测试，零依赖
+node --test          # 43 个测试，零依赖
 node --check src/cli.js
 node bin/daytrace.js today --dry-run   # 不写库、不写文件
 ```

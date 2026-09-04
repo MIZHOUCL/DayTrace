@@ -192,7 +192,8 @@ export function ingest(session, rec, range, cutoffHour) {
     const text = extractPrompt(payload);
     if (text && session.prompts.length < MAX_PROMPTS_PER_SESSION) {
       session.prompts.push({ index: session.msgIndex, text, ts: rec.timestamp, localDate: localDateOf(rec.timestamp, cutoffHour) });
-      if (!session.title) session.title = shortTitle(text);
+      // 不给 Codex 会话伪造标题：它没有 ai-title 之类的正式标题字段，
+      // 拿用户随便一句话当标题会让日志出现「那几行呢？」这种毫无信息量的条目。
     }
   } else if (payload.type === 'function_call' || payload.type === 'custom_tool_call') {
     for (const a of extractActions(payload)) {

@@ -54,8 +54,8 @@ export function evidenceFromGit(repoResult, projectId, cutoffHour, nowIso) {
       project_id: projectId,
       path: path.join(repoResult.repo, d.path),
       path_alias: d.path,
-      occurred_at: nowIso,
-      local_date: localDateOf(nowIso, cutoffHour),
+      occurred_at: d.mtime ?? nowIso,
+      local_date: localDateOf(d.mtime ?? nowIso, cutoffHour),
       level: 'L0',
       excerpt: d.status,
     });

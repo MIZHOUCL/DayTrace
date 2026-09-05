@@ -51,7 +51,16 @@ export const DEFAULTS = {
   /** true 时永久禁用一切外发（ADR-008 §8.4）。 */
   managedDevice: false,
   /** 文件系统扫描（ADR-019）。只记路径与时间，不读正文。 */
-  fileScan: { enabled: true, maxDepth: 6, maxFiles: 5000, extraExcludes: [] },
+  fileScan: {
+    enabled: true,
+    maxDepth: 6,
+    maxFiles: 5000,
+    extraExcludes: [],
+    /** 'worklike' = 只记像工作产物的文件（推荐）；'all' = 记下所有非敏感文件 */
+    mode: 'worklike',
+    /** 额外算作工作产物的扩展名，如 ["dwg","step"] */
+    extraExtensions: [],
+  },
   ai: { enabled: false, provider: null, model: null },
 };
 

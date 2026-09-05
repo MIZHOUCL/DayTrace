@@ -58,7 +58,7 @@ export function buildProjects(repos, sessions, opts = {}) {
   for (const d of opts.extraDirs ?? []) {
     if (!repoContaining(d, [...byRoot.keys()])) add(d);
   }
-  const projects = [...byRoot.values()];
+  const projects = dedupeIds([...byRoot.values()]);
   // 用户规则最后应用，覆盖自动结果
   for (const rule of opts.rules ?? []) {
     for (const p of projects) {
@@ -70,6 +70,70 @@ export function buildProjects(repos, sessions, opts = {}) {
     }
   }
   return projects;
+}
+
+/**
+ * 消除 id 冲突。
+ *
+ * 实测过的 bug：`D:\...\WXWork\Global` 与 `D:\software\postgreSQL\data\global`
+ * 都被 slug 成 `global`，`nt_db` 在两个账号目录下各有一个 —— 结果渲染时
+ * 同一份事实被打印了两遍，输出里出现重复的 [[global]] / [[Global]] / [[nt_db]]。
+ * 冲突时用父目录消歧，仍冲突就加序号，保证 id 与目录一一对应。
+ */
+export function dedupeIds(entries) {
+  const byId = new Map();
+  for (const e of entries) {
+    if (!byId.has(e.id)) byId.set(e.id, []);
+    byId.get(e.id).push(e);
+  }
+  const taken = new Set();
+  const out = [];
+  for (const [id, group] of byId) {
+    if (group.length === 1) {
+      group[0].id = uniqueId(id, taken);
+      out.push(group[0]);
+      continue;
+    }
+    for (const e of group) {
+      const parent = path.basename(path.dirname(path.resolve(e.rootPath)));
+      const withParent = parent ? `${parent}/${path.basename(path.resolve(e.rootPath))}` : e.name;
+      e.name = withParent.length > 40 ? `${withParent.slice(0, 40)}…` : withParent;
+      e.id = uniqueId(slug(e.name), taken);
+      out.push(e);
+    }
+  }
+  return out;
+}
+
+function uniqueId(base, taken) {
+  let id = base || 'unknown';
+  let n = 2;
+  while (taken.has(id)) {
+    id = `${base}-${n}`;
+    n += 1;
+  }
+  taken.add(id);
+  return id;
+}
+
+/**
+ * 路径 → 项目 id 的解析器。
+ * dedupeIds 可能改过 id，所以其他模块必须走这里而不是自己再算一次 slug，
+ * 否则证据会挂到一个不存在的项目上。
+ * @param {{id:string, rootPath:string}[]} projects
+ */
+export function makeResolver(projects) {
+  const roots = projects
+    .map((p) => ({ root: path.resolve(p.rootPath), id: p.id }))
+    .sort((a, b) => b.root.length - a.root.length); // 最长前缀优先
+  return function resolve(somePath) {
+    if (!somePath) return null;
+    const target = path.resolve(somePath);
+    for (const r of roots) {
+      if (target === r.root || target.startsWith(`${r.root}${path.sep}`)) return r.id;
+    }
+    return null;
+  };
 }
 
 /** 找出包含 somePath 的最长仓库根。 */

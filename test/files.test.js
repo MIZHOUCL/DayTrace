@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { scanFiles, isSensitiveName, insideRepo, projectDirOf } from '../src/collect/files.js';
+import { scanFiles, isSensitiveName, insideRepo, projectDirOf, isWorkLike, extensionOf } from '../src/collect/files.js';
 import { dayRange, ymd } from '../src/time.js';
 
 // 用本地日期而不是 toISOString().slice(0,10)：后者是 UTC 日期，
@@ -102,4 +102,46 @@ test('projectDirOf 取 root 下第一层目录作为项目', () => {
   // 不在任何 root 下时退回文件所在目录
   const outside = path.resolve(path.join(os.tmpdir(), 'dt-other', 'x'));
   assert.equal(projectDirOf(path.join(outside, 'y.ts'), roots), outside);
+});
+
+test('工作产物白名单：代码/文档/数据留下，应用状态与安装包过滤掉', () => {
+  const keep = [
+    'main.py', 'app.tsx', 'index.vue', 'query.sql', '周报.xlsx', '方案.docx',
+    'README.md', 'config.json', 'schema.yaml', 'Dockerfile', 'Makefile',
+    'requirements.txt', 'pdfpage-1.png', 'flow.drawio',
+  ];
+  for (const n of keep) assert.equal(isWorkLike(n), true, `${n} 应该算工作产物`);
+
+  // 这些是 2026-09-05 那次真实扫描里污染最严重的类型
+  const drop = [
+    'message.db-shm', 'sign.db-wal', 'first_party_sets.db-journal', 'rich_media.db',
+    'NTUSER.DAT{9c0ed8cc-8ae9-11f1-975c-fcb3aaecceca}.TxR.1.regtrans-ms',
+    'NTUSER.DAT{9c0ed8cd}.TM.blf', 'BrowserMetrics-spare.pma',
+    'pg_control', 'pg_internal.init', 'postmaster.pid', 'postmaster.opts', 'current_logfiles',
+    'Config.cfg', 'Local State', 'Last Browser', 'Variations',
+    'Microsoft Edge.lnk', '铭利达OA系统.url', 'ChatGPT Installer.exe', 'DayTrace-main (1).zip',
+    'postgresql-2026-09-05_075928.log', 'lockfile', 'desktop.ini',
+  ];
+  for (const n of drop) assert.equal(isWorkLike(n), false, `${n} 应该被过滤`);
+});
+
+test('mode:all 时只过滤明确的噪音，其余都留', () => {
+  assert.equal(isWorkLike('weird.xyz'), false, 'worklike 模式下未知扩展名不留');
+  assert.equal(isWorkLike('weird.xyz', { mode: 'all' }), true);
+  assert.equal(isWorkLike('message.db-shm', { mode: 'all' }), false, 'all 模式也不要应用状态');
+  assert.equal(isWorkLike('drawing.dwg'), false);
+  assert.equal(isWorkLike('drawing.dwg', { extraExtensions: ['dwg'] }), true, '可用配置放宽');
+});
+
+test('扫描时应用工作产物过滤，并单独计数', () => {
+  const { root, w } = fixture();
+  w('proj/main.py');
+  w('proj/notes.md');
+  w('proj/message.db-shm');
+  w('proj/installer.exe');
+  w('proj/pg_control');
+  const { hits, stats } = scanFiles([root], RANGE, { repos: [] });
+  assert.deepEqual(hits.map((h) => path.basename(h.path)).sort(), ['main.py', 'notes.md']);
+  assert.equal(stats.skippedNoise, 3);
+  fs.rmSync(root, { recursive: true, force: true });
 });

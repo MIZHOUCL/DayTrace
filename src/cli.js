@@ -10,9 +10,10 @@ import { openDb, upsertEvidence } from './db.js';
 import { findRepos, collectRepo, gitAvailable, repoOf } from './collect/git.js';
 import { collectSessions } from './collect/sessions.js';
 import { scanFiles, projectDirOf } from './collect/files.js';
-import { buildProjects, attributeSession, repoContaining, projectIdOf } from './attribute.js';
+import { buildProjects, attributeSession, repoContaining, projectIdOf, makeResolver } from './attribute.js';
 import { evidenceFromGit, evidenceFromSession, evidenceFromFiles, buildFacts, validateReferences, sourceId } from './facts.js';
 import { renderMarkdown } from './render.js';
+import { buildModules } from './modules.js';
 
 const USAGE = `daytrace — 把今天的工作痕迹整理成每句话都能点回证据的日志
 
@@ -20,6 +21,7 @@ const USAGE = `daytrace — 把今天的工作痕迹整理成每句话都能点�
   daytrace today [选项]            生成今天的日志
   daytrace date <YYYY-MM-DD>       生成指定日期的日志
   daytrace week [YYYY-MM-DD]       生成截止到该日的 7 天汇总
+  daytrace modules [YYYY-MM-DD]    列出当天的模块（写日记的选择单位）
   daytrace show <source_id>        查看某条证据（如 commit:a9c7471）
   daytrace where                   打印数据目录与配置路径
   daytrace init                    写出默认配置文件
@@ -105,6 +107,10 @@ export async function main(argv = process.argv.slice(2)) {
       const d = positionals[1] ?? todayLocalDate(cfg.cutoffHour);
       return runReport(cfg, multiDayRange(d, 7, cfg.cutoffHour), flags);
     }
+    case 'modules': {
+      const d = positionals[1] ?? todayLocalDate(cfg.cutoffHour);
+      return runModules(cfg, dayRange(d, cfg.cutoffHour), flags);
+    }
     case 'show':
       return showEvidence(positionals[1], flags);
     case 'where':
@@ -119,8 +125,8 @@ export async function main(argv = process.argv.slice(2)) {
   }
 }
 
-/** 采集 → 归因 → 落库 → 事实 → 校验 → 渲染。 */
-function runReport(cfg, range, flags) {
+/** 采集：git + 会话 + 文件扫描 → 归因分组。runReport 与 runModules 共用。 */
+function collectAll(cfg, range, flags) {
   const nowIso = new Date().toISOString();
   const warn = syncDirWarning();
   if (warn && !flags.json) process.stderr.write(`警告：${warn}\n`);
@@ -148,14 +154,17 @@ function runReport(cfg, range, flags) {
         maxDepth: cfg.fileScan?.maxDepth ?? 6,
         maxFiles: cfg.fileScan?.maxFiles ?? 5000,
         extraExcludes: cfg.fileScan?.extraExcludes ?? [],
+        mode: cfg.fileScan?.mode ?? 'worklike',
+        extraExtensions: cfg.fileScan?.extraExtensions ?? [],
       })
-    : { hits: [], stats: { scanned: 0, dirs: 0, skippedInRepo: 0, skippedSensitive: 0, truncated: false } };
+    : { hits: [], stats: { scanned: 0, dirs: 0, skippedInRepo: 0, skippedSensitive: 0, skippedNoise: 0, truncated: false } };
   if (!flags.json && fileScanOn) {
     const s = fileScan.stats;
     if (s.truncated) {
       process.stderr.write(`文件扫描达到上限 ${cfg.fileScan?.maxFiles ?? 5000} 个，结果已截断。调大 config.json 的 fileScan.maxFiles 可放宽。\n`);
     }
     if (s.skippedSensitive) process.stderr.write(`已跳过 ${s.skippedSensitive} 个疑似敏感文件（连路径都不记录）。\n`);
+    if (s.skippedNoise) process.stderr.write(`已过滤 ${s.skippedNoise} 个非工作产物（应用状态、临时文件、安装包等）。\n`);
   }
 
   const projects = buildProjects(repos, sessions, {
@@ -164,6 +173,7 @@ function runReport(cfg, range, flags) {
   });
 
   const gitByProject = new Map();
+  const resolveProject = makeResolver(projects);
   const isToday = range.localDate === todayLocalDate(cfg.cutoffHour);
   const gitWarnings = [];
   for (const repo of repos) {
@@ -171,7 +181,7 @@ function runReport(cfg, range, flags) {
     gitWarnings.push(...(result.warnings ?? []));
     // 未提交改动属于「现在」，生成过去某天的日志时不能算进去
     if (!isToday) result.dirty = [];
-    const id = projectIdOf(repo);
+    const id = resolveProject(repo) ?? projectIdOf(repo);
     if (!result.commits.length && !result.dirty.length) continue;
     if (!gitByProject.has(id)) gitByProject.set(id, []);
     gitByProject.get(id).push(result);
@@ -182,10 +192,10 @@ function runReport(cfg, range, flags) {
 
   const sessionsByProject = new Map();
   for (const s of sessions) {
-    let pid = attributeSession(s, projects);
+    let pid = attributeSession(s, projects) ?? resolveProject(s.cwd);
     if (!pid) {
       const owner = repoOf(s.cwd) || s.cwd;
-      pid = projectIdOf(owner);
+      pid = resolveProject(owner) ?? projectIdOf(owner);
     }
     s.projectId = pid;
     if (!sessionsByProject.has(pid)) sessionsByProject.set(pid, []);
@@ -193,12 +203,23 @@ function runReport(cfg, range, flags) {
   }
 
   const filesByProject = new Map();
-  const projectIdForFile = (p) => projectIdOf(projectDirOf(p, cfg.roots));
+  const projectIdForFile = (p) => {
+    const dir = projectDirOf(p, cfg.roots);
+    return resolveProject(dir) ?? projectIdOf(dir);
+  };
   for (const h of fileScan.hits) {
     const pid = projectIdForFile(h.path);
     if (!filesByProject.has(pid)) filesByProject.set(pid, []);
     filesByProject.get(pid).push(h);
   }
+
+  return { nowIso, repos, sessions, report, fileScan, fileScanOn, projects, gitByProject, sessionsByProject, filesByProject, projectIdForFile };
+}
+
+/** 落库 → 事实 → 引用校验 → 渲染。 */
+function runReport(cfg, range, flags) {
+  const { nowIso, repos, sessions, report, fileScan, fileScanOn, projects, gitByProject, sessionsByProject, filesByProject, projectIdForFile } =
+    collectAll(cfg, range, flags);
 
   const db = openDb(flags['dry-run'] ? ':memory:' : dbPath());
   try {
@@ -258,6 +279,47 @@ function runReport(cfg, range, flags) {
   } finally {
     db.close();
   }
+}
+
+/** 只跑到「模块」这一步，给前端和调试用。 */
+function runModules(cfg, range, flags) {
+  const ctx = collectAll(cfg, range, flags);
+  const modules = buildModules(
+    {
+      projects: ctx.projects,
+      gitByProject: ctx.gitByProject,
+      sessionsByProject: ctx.sessionsByProject,
+      filesByProject: ctx.filesByProject,
+      nowIso: ctx.nowIso,
+    },
+    { gapMinutes: cfg.gapMinutes },
+  );
+
+  if (flags.json) {
+    process.stdout.write(`${JSON.stringify({ localDate: range.localDate, modules }, null, 2)}\n`);
+    return 0;
+  }
+
+  const lines = [`${range.localDate} 共 ${modules.length} 个模块（按权重排序）`, ''];
+  for (const m of modules) {
+    const mark = m.selected ? '●' : '○';
+    const time = m.durationMin ? `${hhmm(m.startTs)}-${hhmm(m.endTs)}` : hhmm(m.startTs);
+    const bits = [];
+    if (m.stats.commits) bits.push(`${m.stats.commits} 提交`);
+    if (m.stats.prompts) bits.push(`${m.stats.prompts} 提问`);
+    if (m.stats.commands) bits.push(`${m.stats.commands} 命令`);
+    if (m.stats.files) bits.push(`${m.stats.files} 文件`);
+    lines.push(`${mark} [${m.category}] ${m.title}`);
+    lines.push(`    ${m.projectName}｜${time}｜${bits.join('、') || '无'}｜权重 ${m.score}`);
+  }
+  lines.push('', '● = 默认写进日记，○ = 默认排除。前端里可以逐个切换。');
+  process.stdout.write(`${lines.join('\n')}\n`);
+  return 0;
+}
+
+function hhmm(iso) {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
 function persistProjects(db, projects, nowIso) {

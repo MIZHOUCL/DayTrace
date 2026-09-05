@@ -63,6 +63,7 @@ DayTrace bets on one thing none of them do: **per-sentence traceability** — ev
 | `daytrace today` | Journal for today |
 | `daytrace date 2026-09-03` | Journal for a specific day |
 | `daytrace week [date]` | 7-day rollup ending on that day |
+| `daytrace modules [date]` | List the day's **modules** — the unit you pick from when writing the journal |
 | `daytrace show commit:1a2b3c4` | Print one piece of evidence (hash prefixes work) |
 | `daytrace where` | Print data dir, database and config paths |
 | `daytrace init` | Write a default config file |
@@ -94,7 +95,7 @@ Data directory: `~/Library/Application Support/daytrace` on macOS, `%APPDATA%\da
 ## Development
 
 ```bash
-node --test          # 48 tests, zero dependencies
+node --test          # 58 tests, zero dependencies
 node bin/daytrace.js today --dry-run   # no database writes, no files written
 ```
 

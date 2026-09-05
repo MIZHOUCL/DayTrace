@@ -50,6 +50,29 @@ daytrace today
 
 每条要点都带脚注，`daytrace show commit:1a2b3c4` 能把原始证据打出来。无法关联到证据的句子会被标成 `unverified`，不会假装成事实。
 
+## 模块：一天的活分成几块
+
+一天的原始证据可能上百条，平铺出来没有重点。`daytrace modules` 把它们按「项目 + 时间连续性」聚成模块 —— 同一项目里间隔超过 90 分钟就算两段工作：
+
+```text
+2026-09-05 共 6 个模块（按权重排序）
+
+● [代码] 项目可行性与实用性
+    AI_log｜21:35-23:17｜7 提问、10 命令、6 文件｜权重 79.8
+● [代码] 改动 9 个文件：src/、collect/（.js）
+    daytrace｜22:06-23:16｜9 文件｜权重 14.3
+● [文档] 改动 6 个文件：decisions/、docs/（.md）
+    novel_ide｜21:34-22:26｜6 文件｜权重 10.5
+○ [杂项] 零散文件改动 11 个
+    杂项｜20:26｜11 文件｜权重 0
+
+● = 默认写进日记，○ = 默认排除
+```
+
+标题优先用 commit message，其次会话标题，再退到首条提问，最后才是目录与扩展名概述。权重里**文件数按平方根计**——一个目录被碰了 60 个文件，说明的事情并不比 6 个多十倍。没有提问也没有提交、只有零星文件的项目会并进「杂项」并默认排除。
+
+这是给前端准备的选择单位：你勾掉不想写进日记的模块，剩下的才交给模型去写。
+
 ## 为什么还要做一个日报工具
 
 已经有三个 MIT 开源项目在读 AI 会话 + git 生成日报（完整对照见 [docs/PRIOR_ART.md](./docs/PRIOR_ART.md)）。它们的证据归因都停在**会话级**：打一个 `[Claude Code]` 标签、写进 frontmatter、按仓库分组。
@@ -73,6 +96,7 @@ CI 已在 GitHub 上跑过：**macOS 与 Windows 在 Node 24 / 25 上全绿**。
 | `daytrace today` | 生成今天的日志 |
 | `daytrace date 2026-09-03` | 生成指定日期的日志 |
 | `daytrace week [日期]` | 截止到该日的 7 天汇总 |
+| `daytrace modules [日期]` | 列出当天的**模块**（写日记的选择单位，按权重排序） |
 | `daytrace show commit:1a2b3c4` | 查看某条证据（支持 hash 前缀） |
 | `daytrace where` | 打印数据目录、数据库、配置路径 |
 | `daytrace init` | 写出默认配置文件 |
@@ -127,12 +151,12 @@ CI 已在 GitHub 上跑过：**macOS 与 Windows 在 Node 24 / 25 上全绿**。
 ## 开发
 
 ```bash
-node --test          # 48 个测试，零依赖
+node --test          # 58 个测试，零依赖
 node --check src/cli.js
 node bin/daytrace.js today --dry-run   # 不写库、不写文件
 ```
 
-代码组织：`src/time.js` 日界 ｜ `src/db.js` 6 张表与迁移 ｜ `src/collect/git.js` git 采集 ｜ `src/collect/providers/*` 会话适配器 ｜ `src/facts.js` 事实与引用校验 ｜ `src/render.js` Markdown。
+代码组织：`src/time.js` 日界与时区 ｜ `src/db.js` 6 张表与迁移 ｜ `src/collect/git.js` git ｜ `src/collect/files.js` 文件扫描与噪音过滤 ｜ `src/collect/providers/*` 会话适配器 ｜ `src/attribute.js` 项目归因 ｜ `src/modules.js` 模块聚类 ｜ `src/facts.js` 事实与引用校验 ｜ `src/render.js` Markdown。
 
 规划与决策文档在 [docs/](./docs/)：[规划书](./docs/PROJECT_PLAN.md)｜[Roadmap](./docs/ROADMAP.md)｜[任务清单](./docs/MVP_ISSUES.md)｜[决策记录](./docs/ADR.md)｜[竞品与借鉴清单](./docs/PRIOR_ART.md)。
 

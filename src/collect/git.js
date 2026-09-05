@@ -112,7 +112,7 @@ export function collectRepo(repo, range, opts = {}) {
   const raw = gitSafe(repo, args, '', warnings);
   const commits = parseLog(raw);
   // 注意：git status 不接受 --no-color（--porcelain 本身就不带颜色），加了会整条命令失败
-  const dirty = parseStatus(gitSafe(repo, ['status', '--porcelain=v1'], '', warnings));
+  const dirty = parseStatus(gitSafe(repo, ['status', '--porcelain=v1'], '', warnings), repo);
   return { repo, branch, commits, dirty, warnings };
 }
 
@@ -141,8 +141,14 @@ export function parseLog(raw) {
   return out;
 }
 
-/** 解析 `git status --porcelain=v1`。只取状态与路径，不读内容。 */
-export function parseStatus(raw) {
+/**
+ * 解析 `git status --porcelain=v1`。只取状态与路径，不读内容。
+ * 顺便 stat 一下拿真实 mtime —— 否则未提交改动只能记成「现在」，
+ * 时间线上会全部堆在运行那一刻，模块也就切不开。
+ * @param {string} raw
+ * @param {string} [repo] 仓库根，用于把相对路径还原成绝对路径去 stat
+ */
+export function parseStatus(raw, repo) {
   const out = [];
   for (const line of raw.split('\n')) {
     if (line.length < 4) continue;
@@ -152,7 +158,16 @@ export function parseStatus(raw) {
       const parts = file.split(' -> ');
       file = parts[parts.length - 1];
     }
-    out.push({ status, path: file.replace(/^"|"$/g, '') });
+    const clean = file.replace(/^"|"$/g, '');
+    let mtime = null;
+    if (repo) {
+      try {
+        mtime = new Date(fs.statSync(path.join(repo, clean)).mtimeMs).toISOString();
+      } catch {
+        mtime = null; // 已删除的文件 stat 不到，属正常
+      }
+    }
+    out.push({ status, path: clean, mtime });
   }
   return out;
 }

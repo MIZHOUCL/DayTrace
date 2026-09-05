@@ -18,7 +18,81 @@ export const EXTRA_SKIP_DIRS = new Set([
   'Program Files (x86)', 'ProgramData', '$RECYCLE.BIN', 'System Volume Information',
   'Trash', '.Trash', 'Downloads.localized', 'Music', 'Movies', 'Pictures', 'Photos',
   'site-packages', 'Cellar', 'pkg', 'obj', 'tmp', 'temp', 'logs',
+  // 应用运行时数据目录：实测在 Windows 上污染最严重的几个来源
+  'WXWork', 'Tencent Files', 'nt_qq', 'nt_db', 'nt_temp', 'nt_msg',
+  'postgreSQL', 'pgdata', 'pg_wal', 'pg_stat', 'pg_notify',
+  'Avator', 'BrowserCache', 'Code Cache', 'GPUCache', 'blob_storage',
+  'CrashDumps', 'Crashpad', 'IndexedDB', 'Local Storage', 'Service Worker',
 ]);
+
+/**
+ * 只把「像工作产物」的文件计入日志。
+ *
+ * 为什么用扩展名白名单而不是继续加黑名单：实测在 Windows 上一次扫描吐出了
+ * 175 条事实，其中绝大多数是 `.db-shm` / `NTUSER.DAT{...}.regtrans-ms` /
+ * `pg_internal.init` 这类应用运行时状态。黑名单永远追不上，白名单一次到位。
+ * 日志工具应该宁缺毋滥 —— 漏记一个冷门格式，比每天读 160 行垃圾好。
+ * 想放宽用 config.json 的 fileScan.extraExtensions，或 fileScan.mode: "all"。
+ */
+export const WORK_EXTENSIONS = new Set([
+  // 代码
+  'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'vue', 'svelte', 'py', 'ipynb', 'java', 'kt', 'kts',
+  'go', 'rs', 'rb', 'php', 'cs', 'cpp', 'cc', 'c', 'h', 'hpp', 'swift', 'm', 'mm', 'scala',
+  'sh', 'bash', 'zsh', 'ps1', 'bat', 'lua', 'pl', 'r', 'dart', 'ex', 'exs', 'clj', 'hs',
+  // 标记 / 样式 / 模板
+  'html', 'htm', 'css', 'scss', 'sass', 'less', 'ejs', 'hbs', 'pug', 'astro',
+  // 文档
+  'md', 'markdown', 'txt', 'rst', 'adoc', 'org', 'tex', 'docx', 'doc', 'pdf', 'rtf', 'odt',
+  'pptx', 'ppt', 'key', 'numbers', 'pages',
+  // 数据 / 配置
+  'sql', 'csv', 'tsv', 'xlsx', 'xls', 'ods', 'json', 'jsonl', 'yaml', 'yml', 'toml', 'ini',
+  'conf', 'cfg', 'properties', 'env-example', 'xml', 'proto', 'graphql', 'gql',
+  // 设计 / 图
+  'drawio', 'excalidraw', 'fig', 'sketch', 'psd', 'ai', 'svg', 'png', 'jpg', 'jpeg', 'gif', 'webp',
+]);
+
+/** 没有扩展名但确实是工作产物的文件名。 */
+export const WORK_FILENAMES = new Set([
+  'Dockerfile', 'Makefile', 'Justfile', 'Rakefile', 'Gemfile', 'Procfile', 'Brewfile',
+  'README', 'LICENSE', 'CHANGELOG', 'CONTRIBUTING', 'AGENTS', 'CLAUDE',
+  'requirements.txt', 'go.mod', 'go.sum', 'Cargo.toml', 'pom.xml', 'build.gradle',
+]);
+
+/** 即使扩展名在白名单里，这些名字也是噪音（应用状态、临时文件、锁）。 */
+const NOISE_PATTERNS = [
+  /\.db(-shm|-wal|-journal)?$/i,
+  /^NTUSER\.DAT/i,
+  /\.(regtrans-ms|blf|pma|etl|evtx|dmp|crdownload|part|partial|swp|swo|orig|rej)$/i,
+  /^(Thumbs\.db|desktop\.ini|\.DS_Store|lockfile|\.lock)$/i,
+  /\.(lock|pid|tmp|temp|bak|old|cache)$/i,
+  /^(pg_control|pg_internal\.init|postmaster\.(pid|opts)|current_logfiles)$/i,
+  /^(Config\.cfg|Local State|Last Browser|Variations|Preferences)$/i,
+  /\.(lnk|url|webloc|exe|msi|dmg|pkg|deb|rpm|appimage|zip|7z|rar|tar|gz|xz|iso)$/i,
+  /^BrowserMetrics/i,
+  /\.log(\.\d+)?$/i,
+];
+
+/** 扩展名（小写，不含点）。没有扩展名返回空串。 */
+export function extensionOf(name) {
+  const i = name.lastIndexOf('.');
+  return i > 0 ? name.slice(i + 1).toLowerCase() : '';
+}
+
+/**
+ * 这个文件是否像「工作产物」。
+ * @param {string} name 文件名
+ * @param {{mode?:string, extraExtensions?:string[]}} [opts]
+ */
+export function isWorkLike(name, opts = {}) {
+  if (NOISE_PATTERNS.some((re) => re.test(name))) return false;
+  if (opts.mode === 'all') return true;
+  const ext = extensionOf(name);
+  if (ext && WORK_EXTENSIONS.has(ext)) return true;
+  if (ext && (opts.extraExtensions ?? []).includes(ext)) return true;
+  if (!ext && WORK_FILENAMES.has(name)) return true;
+  // requirements.txt 之类带扩展名的已知文件名
+  return WORK_FILENAMES.has(name);
+}
 
 /**
  * 疑似敏感文件：默认连路径都不记。
@@ -55,12 +129,12 @@ export function insideRepo(filePath, repos) {
  * @param {{repos?:string[], maxDepth?:number, maxFiles?:number, extraExcludes?:string[]}} [opts]
  */
 export function scanFiles(roots, range, opts = {}) {
-  const { repos = [], maxDepth = 6, maxFiles = 5000, extraExcludes = [] } = opts;
+  const { repos = [], maxDepth = 6, maxFiles = 5000, extraExcludes = [], mode = 'worklike', extraExtensions = [] } = opts;
   const start = Date.parse(range.startUtc);
   const end = Date.parse(range.endUtc);
   const extra = new Set(extraExcludes);
   const hits = [];
-  const stats = { scanned: 0, dirs: 0, skippedInRepo: 0, skippedSensitive: 0, truncated: false };
+  const stats = { scanned: 0, dirs: 0, skippedInRepo: 0, skippedSensitive: 0, skippedNoise: 0, truncated: false };
 
   const skipDir = (name) => SKIP_DIRS.has(name) || EXTRA_SKIP_DIRS.has(name) || extra.has(name) || name.startsWith('.');
 
@@ -97,6 +171,10 @@ export function scanFiles(roots, range, opts = {}) {
       }
       if (isSensitiveName(e.name)) {
         stats.skippedSensitive += 1;
+        continue;
+      }
+      if (!isWorkLike(e.name, { mode, extraExtensions })) {
+        stats.skippedNoise += 1;
         continue;
       }
       hits.push({ path: full, mtime: new Date(m).toISOString(), size: st.size });
